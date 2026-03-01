@@ -109,7 +109,7 @@ where
         for (p, q) in CertificateChain::new(&(&self.ca).into(), &cert) {
             cn = verify_certificate(p, q, Clock::now())?;
         }
-        if self.host.ne(&cn) {
+        if !verify_common_name(&self.host, &cn) {
             error!(
                 "Hostname ({:?}) does not match CommonName ({:?})",
                 self.host, cn
@@ -256,6 +256,37 @@ fn verify_signature(
         return Err(TlsError::InvalidSignature);
     }
     Ok(())
+}
+
+fn verify_common_name(
+    host: &Option<heapless::String<HOSTNAME_MAXLEN>>,
+    cn: &Option<heapless::String<HOSTNAME_MAXLEN>>,
+) -> bool {
+    match (host.as_ref(), cn.as_ref()) {
+        (None, None) => true,
+        (Some(h), Some(c)) => {
+            let host = h.as_str();
+            let cn = c.as_str();
+
+            // Exact match or global wildcard
+            if cn == "*" {
+                return true;
+            }
+
+            // Leading '*' is allowed (wildcard prefix). Any other placement is rejected.
+            if let Some(suffix) = cn.strip_prefix('*') {
+                return host.ends_with(suffix);
+            }
+
+            // If there's any '*' left (i.e. in the middle or trailing), reject.
+            if cn.contains('*') {
+                return false;
+            }
+
+            host == cn
+        }
+        _ => false,
+    }
 }
 
 fn get_certificate_tlv_bytes<'a>(input: &[u8]) -> der::Result<&[u8]> {
